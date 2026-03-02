@@ -7,9 +7,10 @@ from plotly.subplots import make_subplots
 import google.generativeai as genai
 import datetime
 import json
+import re
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Terminal Cuantitativa MBA", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Terminal Cuantitativa MBA", layout="wide")
 
 # --- ESTILOS CSS (TIPO POWER BI / MODERNO) ---
 st.markdown("""
@@ -78,10 +79,10 @@ STOCKS = {
 api_key = st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else None
 if api_key:
     genai.configure(api_key=api_key)
-    # Corrección de la versión del modelo a la estable más reciente
-    model = genai.GenerativeModel("gemini-1.5-flash-latest") 
+    # CORRECCIÓN DE ERROR 404: Se usa la versión estable global "gemini-1.5-flash"
+    model = genai.GenerativeModel("gemini-1.5-flash") 
 else:
-    st.sidebar.warning("⚠️ Falla de API: Configura GEMINI_API_KEY")
+    st.warning("⚠️ Falla de API: Configura GEMINI_API_KEY en los secrets de Streamlit.")
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_gemini_response(prompt):
@@ -92,22 +93,28 @@ def get_gemini_response(prompt):
     except Exception as e:
         return f"Error en IA: {e}"
 
-# --- BARRA LATERAL ---
-st.sidebar.header("⚙️ Configuración")
-selected_company = st.sidebar.selectbox("Buscador de Activos:", options=list(STOCKS.keys()), index=0)
-stock_info = STOCKS[selected_company]
-ticker_symbol = stock_info["ticker"]
-index_symbol = stock_info["index"]
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Gráficos Técnicos")
-timeframe = st.sidebar.selectbox("Temporalidad", ["1mo", "1y", "ytd", "5y", "max"], index=1, format_func=lambda x: {"1mo":"1 Mes", "1y":"1 Año", "ytd":"YTD", "5y":"5 Años", "max":"Máximo"}[x])
-show_bb = st.sidebar.checkbox("Bandas Bollinger", value=True)
-show_macd = st.sidebar.checkbox("MACD", value=False)
-show_rsi = st.sidebar.checkbox("RSI", value=False)
-show_fib = st.sidebar.checkbox("Fibonacci", value=False)
-
 st.title("Terminal Cuantitativa Institucional")
+
+# --- DEFINICIÓN DE PESTAÑAS Y CAPTURA DE CONTROLES ---
+tab1, tab2, tab3, tab4 = st.tabs(["información básica", "perfil macro y beta", "análisis técnico", "veredicto final"])
+
+# 1. Capturar el activo en la primera pestaña
+with tab1:
+    selected_company = st.selectbox("Buscador de Activos:", options=list(STOCKS.keys()), index=0)
+    stock_info = STOCKS[selected_company]
+    ticker_symbol = stock_info["ticker"]
+    index_symbol = stock_info["index"]
+
+# 2. Capturar temporalidad y gráficos en la tercera pestaña antes de descargar datos
+with tab3:
+    st.markdown("### Configuración del Gráfico Técnico")
+    c_time, c_bb, c_macd, c_rsi, c_fib = st.columns(5)
+    timeframe = c_time.selectbox("Temporalidad", ["1mo", "1y", "ytd", "5y", "max"], index=1, format_func=lambda x: {"1mo":"1 Mes", "1y":"1 Año", "ytd":"YTD", "5y":"5 Años", "max":"Máximo"}[x])
+    show_bb = c_bb.checkbox("Bandas Bollinger", value=True)
+    show_macd = c_macd.checkbox("MACD", value=False)
+    show_rsi = c_rsi.checkbox("RSI", value=False)
+    show_fib = c_fib.checkbox("Fibonacci", value=False)
+    st.markdown("---")
 
 # --- EXTRACCIÓN DE DATOS ---
 @st.cache_data(ttl=3600)
@@ -133,14 +140,13 @@ def download_data(ticker, benchmark, period):
         
         return df, qr, roe, mcap
     except Exception as e:
-        # Simulación de respaldo rápida
         dates = pd.bdate_range(end=datetime.date.today(), periods=252)
         mkt = 3500 * np.exp(np.cumsum(np.random.normal(0.0002, 0.01, len(dates))))
         stk = 150 * np.exp(np.cumsum(np.random.normal(0.0003, 0.015, len(dates))))
         df = pd.DataFrame({'Stock': stk, 'Market': mkt}, index=dates)
         return df, default_qr, default_roe, default_mcap
 
-with st.spinner("Sincronizando..."):
+with st.spinner("Sincronizando con el mercado..."):
     df, quick_ratio, roe, mcap = download_data(ticker_symbol, index_symbol, timeframe)
 
 # --- CÁLCULOS TÉCNICOS Y FUNDAMENTALES ---
@@ -149,7 +155,7 @@ returns = df.pct_change().dropna()
 cov_mat = np.cov(returns['Market'], returns['Stock'])
 beta_calc = cov_mat[0, 1] / cov_mat[0, 0] if cov_mat[0,0] != 0 else 1.0
 
-# Indicadores
+# Indicadores Técnicos
 df['SMA'] = df['Stock'].rolling(window=20).mean()
 df['STD'] = df['Stock'].rolling(window=20).std()
 df['Upper_BB'] = df['SMA'] + (df['STD'] * 2)
@@ -171,31 +177,31 @@ min_p = df['Stock'].min()
 diff_p = max_p - min_p
 fib_levels = [max_p, max_p - 0.236*diff_p, max_p - 0.382*diff_p, max_p - 0.5*diff_p, max_p - 0.618*diff_p, min_p]
 
-# --- PESTAÑAS (En minúsculas según requerimiento) ---
-tab1, tab2, tab3, tab4 = st.tabs(["información básica", "perfil macro y beta", "análisis técnico", "veredicto final"])
+# --- RENDERIZADO DEL RESTO DE LAS PESTAÑAS ---
 
 with tab1:
-    st.header(f"Información Corporativa: {selected_company}")
+    st.header(f"Información Corporativa")
     
     prompt_info = f"""
-    Eres un analista financiero. Devuelve la información de la empresa {selected_company} en formato JSON OBLIGATORIAMENTE, con la siguiente estructura exacta:
+    Eres un analista financiero. Devuelve la información de la empresa {selected_company} en formato JSON ESTRICTAMENTE.
+    ESTRUCTURA EXACTA:
     {{
         "descripcion": "Quiénes son y qué hacen (máximo 70 palabras).",
         "riesgos": "Análisis del entorno (riesgo político, inflación, y otros dos factores) en {stock_info['region']} (máximo 150 palabras).",
         "segmentos": ["Segmento A", "Segmento B", "Segmento C"],
         "porcentajes": [50, 30, 20]
     }}
-    Asegúrate de que la suma de porcentajes sea 100.
+    Asegúrate de que la suma de porcentajes sea 100. NO escribas código markdown alrededor.
     """
     
     with st.spinner("IA analizando fundamentales de la empresa..."):
         info_json_str = get_gemini_response(prompt_info)
         
     try:
-        # Limpiar posible formato Markdown del output de Gemini
-        if "```json" in info_json_str:
-            info_json_str = info_json_str.split("```json")[1].split("```")[0].strip()
-        data_info = json.loads(info_json_str)
+        # CORRECCIÓN ERROR JSON: Usar expresiones regulares para extraer solo el bloque JSON
+        match = re.search(r'\{.*\}', info_json_str, re.DOTALL)
+        clean_json = match.group(0) if match else info_json_str
+        data_info = json.loads(clean_json)
         
         st.write(f"**Descripción:** {data_info.get('descripcion', 'N/A')}")
         
@@ -212,7 +218,7 @@ with tab1:
         st.session_state['tab1_data'] = data_info # Guardar para la pestaña final
         
     except Exception as e:
-        st.error("Error decodificando la respuesta de la IA. Por favor, recarga.")
+        st.error(f"Error decodificando la respuesta de la IA. Por favor, recarga. Detalle: {e}")
 
 with tab2:
     st.header("Análisis de Riesgo y Divisas")
@@ -232,8 +238,11 @@ with tab2:
     
     Formato OBLIGATORIO:
     **Interpretación Beta:** [Texto]
+    
     **Interpretación DuPont:** [Texto]
+    
     **Interpretación Test Ácido:** [Texto]
+    
     **Análisis Teorías de Divisas:** [Texto]
     """
     
@@ -243,13 +252,11 @@ with tab2:
         st.session_state['tab2_data'] = macro_text
 
 with tab3:
-    st.header(f"Gráfico Interactivo Avanzado ({timeframe})")
-    
+    # El encabezado y los controles ya se renderizaron arriba, aquí solo va el gráfico.
     fig = make_subplots(rows=3 if show_macd or show_rsi else 1, cols=1, 
                         shared_xaxes=True, vertical_spacing=0.05, 
                         row_heights=[0.6, 0.2, 0.2] if show_macd and show_rsi else ([0.7, 0.3] if show_macd or show_rsi else [1]))
     
-    # Precio Principal
     fig.add_trace(go.Scatter(x=df.index, y=df['Stock'], mode='lines', name='Precio', line=dict(color='#005A9C', width=2)), row=1, col=1)
     
     if show_bb:
@@ -283,7 +290,6 @@ with tab4:
     
     if st.button("Generar Informe Institucional (IA)", type="primary"):
         
-        # Recuperar datos de pestañas anteriores si existen
         tab1_info = st.session_state.get('tab1_data', {})
         desc = tab1_info.get('descripcion', 'N/A')
         riesgos = tab1_info.get('riesgos', 'N/A')
@@ -300,10 +306,6 @@ with tab4:
         e. Gráficos técnicos: Análisis corto (menos de 50 palabras) del MACD, RSI y Bollinger en temporalidad {timeframe}.
         
         REGLAS DE DECISIÓN DEL MODELO (Aplica esta lógica internamente):
-        - Bloque Fundamental (35%)
-        - Bloque Riesgo y Macro (30%)
-        - Bloque Divisas (15%)
-        - Bloque Análisis Técnico (20%)
         Calcula un SCORE TOTAL de -100 a +100.
         Decisión: +40 a +100 (COMPRAR), +10 a +39 (MANTENER), -9 a +9 (NEUTRAL), -10 a -39 (REDUCIR), -40 a -100 (VENDER).
         Regla prudencial: Si riesgo geopolítico es Alto o Beta > 1.5, Máximo permitido = MANTENER.
@@ -317,9 +319,10 @@ with tab4:
         5. Indique evento invalidante.
         6. Concluya con el Score [INSERTAR SCORE], la decisión [COMPRAR/MANTENER/VENDER] y el nivel de convicción (Alto/Medio/Bajo).
         
-        Lenguaje: Profesional, crítico y prudente (tipo comité de riesgos bancario).
+        Lenguaje: Profesional, crítico y prudente.
         """
         
         with st.spinner("Compilando reporte final aplicando modelo de Scoring..."):
             veredicto = get_gemini_response(prompt_final)
-            st.markdown(veredicto)
+            st.markdown(f"<div class='ai-box'>{veredicto}</div>", unsafe_allow_html=True)
+
