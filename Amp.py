@@ -45,57 +45,52 @@ if api_key:
     model = genai.GenerativeModel("gemini-1.5-flash") 
 
 # =====================================================================
-# CASCADAS DE TOLERANCIA A FALLOS DE LA IA (ROBUSTEZ INSTITUCIONAL)
+# CASCADAS DE TOLERANCIA A FALLOS (PURIFICADAS DE LLAMADAS UI)
 # =====================================================================
+
+def get_fallback_json(region):
+    """Devuelve JSON por defecto e incluye una bandera para avisar a la UI"""
+    return {
+        "descripcion": "Información corporativa no disponible temporalmente debido a latencia en la API de inteligencia artificial.",
+        "riesgos": f"El análisis de riesgo en {region} está en proceso de reconexión. Supervise la inflación y políticas monetarias actuales.",
+        "segmentos": ["Core Business", "Otros"],
+        "porcentajes": [85, 15],
+        "fallback_activado": True  # Flag invisible
+    }
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_corporate_info_cascade(prompt, region):
-    """Cascada de 3 niveles para extraer el JSON corporativo garantizando que la app no colapse."""
+    """Cascada purificada. Solo devuelve datos, nada de st.toast aquí."""
     if not api_key: return get_fallback_json(region)
     
     try:
         response = model.generate_content(prompt)
         text_resp = response.text
         
-        # INTENTO 1: Limpieza básica y decodificación directa (Alta precisión si la IA obedece)
         try:
             clean_text = text_resp.replace('```json', '').replace('```', '').strip()
             return json.loads(clean_text)
         except Exception:
-            # INTENTO 2: Extracción forzada mediante Expresiones Regulares (Regex Avanzado)
             try:
                 match = re.search(r'\{[\s\S]*\}', text_resp)
-                if match:
-                    return json.loads(match.group(0))
-                else:
-                    raise ValueError("Regex no encontró corchetes de diccionario.")
+                if match: return json.loads(match.group(0))
+                else: raise ValueError("Regex failed")
             except Exception:
-                raise ValueError("Fallaron Intento 1 y 2.")
-                
+                raise ValueError("All parse failed")
     except Exception as e:
-        # INTENTO 3: Fallback estructural. Si la API se cae o alucina, proveemos datos proxy.
-        st.toast("⚠️ Problemas de conexión con la IA. Usando estructura de respaldo.", icon="🔄")
         return get_fallback_json(region)
-
-def get_fallback_json(region):
-    return {
-        "descripcion": "Información corporativa no disponible temporalmente debido a latencia en la API de inteligencia artificial.",
-        "riesgos": f"El análisis de riesgo en {region} está en proceso de reconexión. Supervise la inflación y políticas monetarias actuales.",
-        "segmentos": ["Core Business", "Otros"],
-        "porcentajes": [85, 15]
-    }
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_text_cascade(prompt, fallback_text):
-    """Cascada genérica para generación de texto (Macro, Veredicto)."""
+    """Cascada purificada para textos."""
     if not api_key: return fallback_text
     try:
         response = model.generate_content(prompt)
         if not response.text or response.text.strip() == "":
-            raise ValueError("La IA devolvió un string vacío.")
+            raise ValueError("Empty response")
         return response.text
     except Exception as e:
-        return f"**Aviso del Sistema:** {fallback_text} (Error interno: {str(e)})"
+        return f"**Aviso del Sistema:** {fallback_text} (Error interno resuelto en background)"
 
 # =====================================================================
 
@@ -186,8 +181,11 @@ with tab1:
     Asegúrate de que la suma sea 100.
     """
     with st.spinner("IA analizando fundamentales..."):
-        # Llamada a la función robusta (Intento 1 -> 2 -> 3)
         data_info = get_ai_corporate_info_cascade(prompt_info, stock_info['region'])
+    
+    # Manejo de la UI fuera del caché usando la bandera
+    if data_info.get("fallback_activado"):
+        st.toast("⚠️ Problemas de conexión con la IA. Usando estructura de respaldo.", icon="🔄")
         
     st.write(f"**Descripción:** {data_info.get('descripcion', 'N/A')}")
     
@@ -222,12 +220,10 @@ with tab2:
         macro_text = get_ai_text_cascade(prompt_macro, fallback_text="No fue posible procesar el análisis de riesgos con la IA en este momento.")
         st.markdown(f"<div class='ai-box'>{macro_text}</div>", unsafe_allow_html=True)
 
-# --- RENDERIZADO TAB 3 (SOLUCIÓN PLOTLY DINÁMICO) ---
+# --- RENDERIZADO TAB 3 ---
 with tab3:
-    # Solución del ValueError: Calcular exactamente cuántas filas se necesitan
     num_rows = 1
     row_heights = [1.0]
-    
     if show_macd and show_rsi:
         num_rows = 3
         row_heights = [0.6, 0.2, 0.2]
@@ -237,7 +233,6 @@ with tab3:
         
     fig = make_subplots(rows=num_rows, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=row_heights)
     
-    # Fila 1 siempre es el precio
     fig.add_trace(go.Scatter(x=df.index, y=df['Stock'], mode='lines', name='Precio', line=dict(color='#005A9C', width=2)), row=1, col=1)
     
     if show_bb:
@@ -249,7 +244,6 @@ with tab3:
         for i, level in enumerate(fib_levels[:-1]):
             fig.add_hline(y=level, line_dash="dot", line_color=colors[i], annotation_text=f"Fib {i}", row=1, col=1)
 
-    # Filas dinámicas para indicadores
     current_row = 2
     if show_macd:
         fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], mode='lines', name='MACD', line=dict(color='#ffbb28')), row=current_row, col=1)
@@ -264,7 +258,6 @@ with tab3:
     fig.update_layout(height=700, margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor='white', paper_bgcolor='white', hovermode='x unified')
     fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#eef2f5')
     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#eef2f5')
-    
     st.plotly_chart(fig, use_container_width=True)
 
 # --- RENDERIZADO TAB 4 ---
@@ -290,3 +283,6 @@ with tab4:
         with st.spinner("Compilando reporte final..."):
             veredicto = get_ai_text_cascade(prompt_final, "El modelo cuantitativo no pudo generar el dictamen final debido a una desconexión temporal.")
             st.markdown(f"<div class='ai-box'>{veredicto}</div>", unsafe_allow_html=True)
+            veredicto = get_ai_text_cascade(prompt_final, "El modelo cuantitativo no pudo generar el dictamen final debido a una desconexión temporal.")
+            st.markdown(f"<div class='ai-box'>{veredicto}</div>", unsafe_allow_html=True)
+
