@@ -38,59 +38,69 @@ STOCKS = {
     "Banco Santander": {"ticker": "SAN.MC", "index": "^IBEX", "currency": "EUR", "region": "España", "inflacion": 3.2}
 }
 
-# --- CONFIGURACIÓN IA ---
-api_key = st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else None
-if api_key:
+# --- CONFIGURACIÓN DE IA ---
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash") 
+except Exception:
+    api_key = None
+    st.error("⚠️ ATENCIÓN: No se encontró 'GEMINI_API_KEY' en los Secrets de Streamlit. La IA no funcionará.")
 
 # =====================================================================
-# CASCADAS DE TOLERANCIA A FALLOS (PURIFICADAS DE LLAMADAS UI)
+# CASCADAS DE TOLERANCIA A FALLOS (3 ALTERNATIVAS PROFESIONALES)
 # =====================================================================
-
-def get_fallback_json(region):
-    """Devuelve JSON por defecto e incluye una bandera para avisar a la UI"""
-    return {
-        "descripcion": "Información corporativa no disponible temporalmente debido a latencia en la API de inteligencia artificial.",
-        "riesgos": f"El análisis de riesgo en {region} está en proceso de reconexión. Supervise la inflación y políticas monetarias actuales.",
-        "segmentos": ["Core Business", "Otros"],
-        "porcentajes": [85, 15],
-        "fallback_activado": True  # Flag invisible
-    }
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_corporate_info_cascade(prompt, region):
-    """Cascada purificada. Solo devuelve datos, nada de st.toast aquí."""
-    if not api_key: return get_fallback_json(region)
+    if not api_key:
+        return {"descripcion": "Error: API Key ausente.", "riesgos": "N/A", "segmentos": ["N/A"], "porcentajes": [100], "error": "Falta API Key."}
     
+    # Alternativa 1: Generación de JSON Forzado (MIME Type) - Alta Precisión
     try:
-        response = model.generate_content(prompt)
-        text_resp = response.text
-        
+        model_json = genai.GenerativeModel("gemini-1.5-flash", generation_config={"response_mime_type": "application/json"})
+        response = model_json.generate_content(prompt)
+        return json.loads(response.text)
+    except Exception as e1:
+        # Alternativa 2: Modelo Estándar + Expresiones Regulares (Regex)
         try:
-            clean_text = text_resp.replace('```json', '').replace('```', '').strip()
-            return json.loads(clean_text)
-        except Exception:
-            try:
-                match = re.search(r'\{[\s\S]*\}', text_resp)
-                if match: return json.loads(match.group(0))
-                else: raise ValueError("Regex failed")
-            except Exception:
-                raise ValueError("All parse failed")
-    except Exception as e:
-        return get_fallback_json(region)
+            model_std = genai.GenerativeModel("gemini-1.5-flash")
+            response = model_std.generate_content(prompt)
+            match = re.search(r'\{[\s\S]*\}', response.text)
+            if match:
+                return json.loads(match.group(0))
+            else:
+                raise ValueError("Regex no encontró estructura JSON válida.")
+        except Exception as e2:
+            # Alternativa 3: Diccionario de Transparencia (Muestra el error real en pantalla)
+            return {
+                "descripcion": "Fallo crítico al conectar con Gemini API.",
+                "riesgos": f"Detalle Técnico para depurar:\nFallo Alt 1: {str(e1)}\nFallo Alt 2: {str(e2)}",
+                "segmentos": ["Error de IA", "Datos Locales"],
+                "porcentajes": [99, 1],
+                "error_critico": True
+            }
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_ai_text_cascade(prompt, fallback_text):
-    """Cascada purificada para textos."""
-    if not api_key: return fallback_text
+def get_ai_text_cascade(prompt):
+    if not api_key:
+        return "⚠️ Error: API Key no configurada. No se puede generar el análisis."
+    
+    # Alternativa 1: gemini-1.5-flash
     try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content(prompt)
         if not response.text or response.text.strip() == "":
-            raise ValueError("Empty response")
+            raise ValueError("La API de Google devolvió una respuesta vacía.")
         return response.text
-    except Exception as e:
-        return f"**Aviso del Sistema:** {fallback_text} (Error interno resuelto en background)"
+    except Exception as e1:
+        # Alternativa 2: gemini-1.0-pro (Fallback de modelo)
+        try:
+            model_fallback = genai.GenerativeModel("gemini-1.0-pro")
+            response = model_fallback.generate_content(prompt)
+            return response.text
+        except Exception as e2:
+            # Alternativa 3: Retorno del error exacto
+            return f"⚠️ **Error Técnico IA:**\n\n1. {str(e1)}\n2. {str(e2)}"
 
 # =====================================================================
 
@@ -115,7 +125,7 @@ with tab3:
     show_fib = c_fib.checkbox("Fibonacci", value=False)
     st.markdown("---")
 
-# --- EXTRACCIÓN DE DATOS ---
+# --- EXTRACCIÓN DE DATOS TÉCNICOS ---
 @st.cache_data(ttl=3600)
 def download_data(ticker, benchmark, period):
     try:
@@ -140,7 +150,7 @@ def download_data(ticker, benchmark, period):
 with st.spinner("Sincronizando con el mercado..."):
     df, quick_ratio, roe, mcap = download_data(ticker_symbol, index_symbol, timeframe)
 
-# --- CÁLCULOS TÉCNICOS ---
+# --- CÁLCULOS ---
 current_price = df['Stock'].iloc[-1]
 returns = df.pct_change().dropna()
 cov_mat = np.cov(returns['Market'], returns['Stock'])
@@ -170,28 +180,26 @@ fib_levels = [max_p, max_p - 0.236*diff_p, max_p - 0.382*diff_p, max_p - 0.5*dif
 with tab1:
     st.header(f"Información Corporativa")
     prompt_info = f"""
-    Eres un analista financiero. Devuelve la información de la empresa {selected_company} en formato JSON ESTRICTAMENTE.
-    ESTRUCTURA EXACTA:
+    Eres un analista financiero. Genera la información de {selected_company} usando EXACTAMENTE la siguiente estructura de claves y asegurándote que los porcentajes sumen 100:
     {{
         "descripcion": "Quiénes son y qué hacen (máximo 70 palabras).",
-        "riesgos": "Análisis del entorno (riesgo político, inflación y otros 2 factores) en {stock_info['region']} (máximo 150 palabras).",
-        "segmentos": ["Segmento A", "Segmento B"],
-        "porcentajes": [60, 40]
+        "riesgos": "Análisis del entorno: riesgo político, inflación ({stock_info['inflacion']}%) y otros 2 factores en {stock_info['region']} (máximo 150 palabras).",
+        "segmentos": ["Segmento Principal", "Secundario"],
+        "porcentajes": [70, 30]
     }}
-    Asegúrate de que la suma sea 100.
     """
+    
     with st.spinner("IA analizando fundamentales..."):
         data_info = get_ai_corporate_info_cascade(prompt_info, stock_info['region'])
     
-    # Manejo de la UI fuera del caché usando la bandera
-    if data_info.get("fallback_activado"):
-        st.toast("⚠️ Problemas de conexión con la IA. Usando estructura de respaldo.", icon="🔄")
+    if data_info.get("error_critico"):
+        st.error("⚠️ La IA falló al procesar. Revisa los errores en la caja de 'Análisis del Entorno'.")
         
     st.write(f"**Descripción:** {data_info.get('descripcion', 'N/A')}")
     
     col_pie, col_risk = st.columns([1, 1])
     with col_pie:
-        fig_pie = go.Figure(data=[go.Pie(labels=data_info['segmentos'], values=data_info['porcentajes'], hole=.4, marker_colors=['#005A9C', '#00c49f', '#ffbb28', '#ff8042'])])
+        fig_pie = go.Figure(data=[go.Pie(labels=data_info.get('segmentos', ['N/A']), values=data_info.get('porcentajes', [100]), hole=.4, marker_colors=['#005A9C', '#00c49f', '#ffbb28', '#ff8042'])])
         fig_pie.update_layout(title_text="Composición de Ingresos", margin=dict(t=40, b=0, l=0, r=0))
         st.plotly_chart(fig_pie, use_container_width=True)
         
@@ -210,14 +218,20 @@ with tab2:
     c3.markdown(f"<div class='metric-box'><div class='metric-title'>Test Ácido</div><div class='metric-value'>{quick_ratio:.2f}</div></div>", unsafe_allow_html=True)
     
     prompt_macro = f"""
-    Para {selected_company} (Beta: {beta_calc:.2f}, ROE: {roe*100:.2f}%, Test Ácido: {quick_ratio:.2f}, Inflación: {stock_info['inflacion']}%):
-    1. OBLIGATORIO empezar con: "Por cada punto que el índice de referencia suba la acción subirá el valor que corresponda en referencia 1:{beta_calc:.2f}." Interpreta Beta en 90 palabras.
-    2. Interpreta ROE en 90 palabras.
-    3. Interpreta Test Ácido en 90 palabras.
-    4. Analiza las 3 teorías de divisas (PPA, PTI, Fisher) para la región.
+    Actúa como un experto en finanzas corporativas. Analiza las métricas de la empresa {selected_company}.
+    
+    INSTRUCCIONES ESTRICTAS DE REDACCIÓN:
+    
+    1. BETA: El texto DEBE INICIAR EXACTAMENTE con esta frase: "Por cada punto que el índice de referencia suba la acción subirá {beta_calc:.2f} en referencia 1:{beta_calc:.2f}." Continúa la interpretación de la Beta (máximo 90 palabras).
+    
+    2. DUPONT: En un párrafo nuevo (separado), interpreta el ROE de {roe*100:.2f}% (máximo 90 palabras).
+    
+    3. TEST DE ACIDEZ: En un párrafo nuevo (separado), interpreta el Ratio de Liquidez de {quick_ratio:.2f} (máximo 90 palabras).
+    
+    4. TEORÍAS DE DIVISAS: En un párrafo nuevo (separado), analiza exhaustivamente la Paridad del Poder Adquisitivo, la Paridad de Tipos de Interés y el Efecto Fisher. DEBES basar este análisis en la tasa de inflación actual del {stock_info['inflacion']}% en la región de {stock_info['region']} para la divisa {stock_info['currency']}. (Máximo 150 palabras).
     """
-    with st.spinner("IA analizando métricas..."):
-        macro_text = get_ai_text_cascade(prompt_macro, fallback_text="No fue posible procesar el análisis de riesgos con la IA en este momento.")
+    with st.spinner("IA analizando métricas y redactando teorías macro..."):
+        macro_text = get_ai_text_cascade(prompt_macro)
         st.markdown(f"<div class='ai-box'>{macro_text}</div>", unsafe_allow_html=True)
 
 # --- RENDERIZADO TAB 3 ---
@@ -270,7 +284,7 @@ with tab4:
         prompt_final = f"""
         Actúa como un analista senior de riesgos. Elabora un informe ejecutivo de {selected_company}.
         Datos: Cotización: {current_price:.2f}, Market Cap: {mcap:.2f} B.
-        Indicadores: Beta ({beta_calc:.2f}), ROE ({roe*100:.2f}%), Test Ácido ({quick_ratio:.2f}).
+        Indicadores: Beta ({beta_calc:.2f}), ROE ({roe*100:.2f}%), Test Ácido ({quick_ratio:.2f}). Inflación: {stock_info['inflacion']}%.
         
         REGLAS DE DECISIÓN DEL MODELO:
         Calcula internamente un SCORE de -100 a +100 basado en fundamentales, macro, divisas y técnico.
@@ -278,11 +292,13 @@ with tab4:
         Regla prudencial: Si Beta > 1.5, Máximo permitido = MANTENER.
         
         REDACTA: Justificación estructurada en MENOS DE 100 PALABRAS.
-        Prioriza riesgos, evalúa escenarios adversos, analiza sensibilidad a tasas y concluye explícitamente con el Score, la decisión final y el nivel de convicción.
+        1. Evalúa escenarios adversos e inflación.
+        2. Analiza las teorías de divisas en la justificación.
+        3. Explica la coherencia técnico-fundamental.
+        4. Concluye explícitamente con el Score, la decisión final y el nivel de convicción.
         """
         with st.spinner("Compilando reporte final..."):
-            veredicto = get_ai_text_cascade(prompt_final, "El modelo cuantitativo no pudo generar el dictamen final debido a una desconexión temporal.")
+            veredicto = get_ai_text_cascade(prompt_final)
             st.markdown(f"<div class='ai-box'>{veredicto}</div>", unsafe_allow_html=True)
-            veredicto = get_ai_text_cascade(prompt_final, "El modelo cuantitativo no pudo generar el dictamen final debido a una desconexión temporal.")
-            st.markdown(f"<div class='ai-box'>{veredicto}</div>", unsafe_allow_html=True)
+
 
