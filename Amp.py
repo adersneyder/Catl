@@ -6,70 +6,120 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import google.generativeai as genai
 import datetime
+import json
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Terminal Cuantitativa MBA", layout="wide", initial_sidebar_state="expanded")
 
+# --- ESTILOS CSS (TIPO POWER BI / MODERNO) ---
 st.markdown("""
     <style>
-    .stApp { background-color: #0d1117; color: #c9d1d9; }
-    h1, h2, h3 { color: #58a6ff !important; }
-    .metric-box { background-color: #161b22; border: 1px solid #30363d; padding: 15px; border-radius: 8px; text-align: center; }
-    .metric-value { font-size: 24px; font-weight: bold; color: #ffffff; }
-    /* Estilo para el st.metric de Streamlit */
-    div[data-testid="stMetricValue"] { font-size: 36px; font-weight: bold; }
+    .stApp { background-color: #f3f6f9; color: #1e1e1e; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    h1, h2, h3 { color: #005A9C !important; font-weight: 600; }
+    
+    /* Cajas de métricas estilo Power BI */
+    .metric-box { 
+        background-color: #ffffff; 
+        padding: 20px; 
+        border-radius: 12px; 
+        text-align: center; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.1);
+        border-top: 4px solid #005A9C;
+        transition: transform 0.2s ease-in-out;
+    }
+    .metric-box:hover { transform: translateY(-3px); box-shadow: 0 6px 12px rgba(0,0,0,0.1); }
+    .metric-title { font-size: 14px; color: #6c757d; text-transform: uppercase; font-weight: bold; margin-bottom: 10px; }
+    .metric-value { font-size: 28px; font-weight: 800; color: #1e1e1e; }
+    
+    /* Pestañas */
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: transparent; border-radius: 4px 4px 0 0; gap: 1px; padding-top: 10px; padding-bottom: 10px; }
+    .stTabs [aria-selected="true"] { color: #005A9C; font-weight: 600; border-bottom: 3px solid #005A9C; }
+    
+    /* Contenedores de IA */
+    .ai-box {
+        background-color: #eef2f5; border-left: 4px solid #00c49f; padding: 15px; border-radius: 0 8px 8px 0; margin-top: 10px; font-size: 15px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # --- BASE DE DATOS DE ACCIONES ---
 STOCKS = {
-    "CATL - Contemporary Amperex Technology (300750.SZ)": {"ticker": "300750.SZ", "index": "000300.SS", "currency": "CNY", "region": "China"},
-    "Kweichow Moutai (600519.SS)": {"ticker": "600519.SS", "index": "000300.SS", "currency": "CNY", "region": "China"},
-    "BYD Company (002594.SZ)": {"ticker": "002594.SZ", "index": "000300.SS", "currency": "CNY", "region": "China"},
-    "Inditex (ITX.MC)": {"ticker": "ITX.MC", "index": "^IBEX", "currency": "EUR", "region": "España"},
-    "Iberdrola (IBE.MC)": {"ticker": "IBE.MC", "index": "^IBEX", "currency": "EUR", "region": "España"}
+    "CATL - Contemporary Amperex Technology": {"ticker": "300750.SZ", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "COSCO Shipping": {"ticker": "601919.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "China Petroleum & Chemical (Sinopec)": {"ticker": "600028.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "China Spacesat": {"ticker": "600118.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "Beijing Capital": {"ticker": "600008.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "Sinopec Shanghai Petrochemical": {"ticker": "600688.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "Hainan Airlines": {"ticker": "600221.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "Aluminum Corp of China": {"ticker": "601600.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "Dongfeng Automobile": {"ticker": "600006.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "Hubei Yihua Chemical": {"ticker": "000422.SZ", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "Kingfa Sci&Tech": {"ticker": "600143.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "Guanghui Energy": {"ticker": "600256.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "CSSC Offshore & Marine": {"ticker": "600685.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "Kweichow Moutai": {"ticker": "600519.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "Sany Heavy Industry": {"ticker": "600031.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "China Railway Group": {"ticker": "601390.SS", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "EVE Energy": {"ticker": "300014.SZ", "index": "000300.SS", "currency": "CNY", "region": "China", "inflacion": 0.3},
+    "Inditex": {"ticker": "ITX.MC", "index": "^IBEX", "currency": "EUR", "region": "España", "inflacion": 3.2},
+    "Iberdrola": {"ticker": "IBE.MC", "index": "^IBEX", "currency": "EUR", "region": "España", "inflacion": 3.2},
+    "Banco Santander": {"ticker": "SAN.MC", "index": "^IBEX", "currency": "EUR", "region": "España", "inflacion": 3.2},
+    "BBVA": {"ticker": "BBVA.MC", "index": "^IBEX", "currency": "EUR", "region": "España", "inflacion": 3.2},
+    "Amadeus IT": {"ticker": "AMS.MC", "index": "^IBEX", "currency": "EUR", "region": "España", "inflacion": 3.2},
+    "Cellnex Telecom": {"ticker": "CLNX.MC", "index": "^IBEX", "currency": "EUR", "region": "España", "inflacion": 3.2},
+    "Telefónica": {"ticker": "TEF.MC", "index": "^IBEX", "currency": "EUR", "region": "España", "inflacion": 3.2},
+    "Repsol": {"ticker": "REP.MC", "index": "^IBEX", "currency": "EUR", "region": "España", "inflacion": 3.2},
+    "Ferrovial": {"ticker": "FER.MC", "index": "^IBEX", "currency": "EUR", "region": "España", "inflacion": 3.2},
+    "CaixaBank": {"ticker": "CABK.MC", "index": "^IBEX", "currency": "EUR", "region": "España", "inflacion": 3.2}
 }
 
-# --- BARRA LATERAL (CONTROLES DE TEMPORALIDAD) ---
-st.sidebar.header("⚙️ Parámetros Técnicos")
-st.sidebar.markdown("Ajusta la temporalidad de los indicadores en tiempo real:")
+# --- CONFIGURACIÓN IA ---
+api_key = st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else None
+if api_key:
+    genai.configure(api_key=api_key)
+    # Corrección de la versión del modelo a la estable más reciente
+    model = genai.GenerativeModel("gemini-1.5-flash-latest") 
+else:
+    st.sidebar.warning("⚠️ Falla de API: Configura GEMINI_API_KEY")
 
-bb_window = st.sidebar.number_input("Períodos Bandas Bollinger (SMA)", min_value=5, max_value=100, value=20)
-st.sidebar.markdown("---")
-macd_fast = st.sidebar.number_input("MACD: Períodos Rápida (EMA)", min_value=1, max_value=50, value=12)
-macd_slow = st.sidebar.number_input("MACD: Períodos Lenta (EMA)", min_value=5, max_value=100, value=26)
-macd_signal = st.sidebar.number_input("MACD: Períodos Señal", min_value=1, max_value=50, value=9)
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_gemini_response(prompt):
+    if not api_key: return "API Key no configurada."
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Error en IA: {e}"
 
-st.title("Terminal Cuantitativa y de Riesgo (AI-Powered)")
-
-selected_company = st.selectbox("Buscador de Activos:", options=list(STOCKS.keys()), index=0)
+# --- BARRA LATERAL ---
+st.sidebar.header("⚙️ Configuración")
+selected_company = st.sidebar.selectbox("Buscador de Activos:", options=list(STOCKS.keys()), index=0)
 stock_info = STOCKS[selected_company]
 ticker_symbol = stock_info["ticker"]
 index_symbol = stock_info["index"]
 
-# --- EXTRACCIÓN DE DATOS (CASCADA DE RIESGOS: REAL -> PROXY -> SIMULACIÓN) ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("Gráficos Técnicos")
+timeframe = st.sidebar.selectbox("Temporalidad", ["1mo", "1y", "ytd", "5y", "max"], index=1, format_func=lambda x: {"1mo":"1 Mes", "1y":"1 Año", "ytd":"YTD", "5y":"5 Años", "max":"Máximo"}[x])
+show_bb = st.sidebar.checkbox("Bandas Bollinger", value=True)
+show_macd = st.sidebar.checkbox("MACD", value=False)
+show_rsi = st.sidebar.checkbox("RSI", value=False)
+show_fib = st.sidebar.checkbox("Fibonacci", value=False)
+
+st.title("Terminal Cuantitativa Institucional")
+
+# --- EXTRACCIÓN DE DATOS ---
 @st.cache_data(ttl=3600)
-def download_data(ticker, benchmark):
-    end_date = datetime.date.today()
-    start_date = end_date - datetime.timedelta(days=365)
-    
-    # Valores fundamentales proxy en caso de fallo de YF
+def download_data(ticker, benchmark, period):
     default_qr = 1.35
     default_roe = 0.185
-    
-    # Mapeo de ETFs Proxy para mitigar riesgo de índices caídos
-    PROXY_MAP = {
-        "000300.SS": "ASHR", # ETF listado en EE.UU. que replica el CSI 300
-        "^IBEX": "EWP"       # ETF listado en EE.UU. que replica a España
-    }
-
-    # === INTENTO 1: Datos Originales Completos ===
+    default_mcap = 50.5
     try:
         stock = yf.Ticker(ticker)
-        info = stock.info # <-- Punto crítico de bloqueo por IP
-        
-        df_stock = yf.download(ticker, start=start_date, end=end_date, progress=False)['Close']
-        df_index = yf.download(benchmark, start=start_date, end=end_date, progress=False)['Close']
+        info = stock.info
+        df_stock = yf.download(ticker, period=period, progress=False)['Close']
+        df_index = yf.download(benchmark, period=period, progress=False)['Close']
         
         if isinstance(df_stock, pd.DataFrame): df_stock = df_stock.squeeze()
         if isinstance(df_index, pd.DataFrame): df_index = df_index.squeeze()
@@ -79,160 +129,197 @@ def download_data(ticker, benchmark):
         
         qr = info.get('quickRatio', default_qr)
         roe = info.get('returnOnEquity', default_roe)
-        name = info.get('shortName', ticker)
+        mcap = info.get('marketCap', default_mcap * 1e9) / 1e9 # En miles de millones
         
-        return df, qr, roe, name
+        return df, qr, roe, mcap
+    except Exception as e:
+        # Simulación de respaldo rápida
+        dates = pd.bdate_range(end=datetime.date.today(), periods=252)
+        mkt = 3500 * np.exp(np.cumsum(np.random.normal(0.0002, 0.01, len(dates))))
+        stk = 150 * np.exp(np.cumsum(np.random.normal(0.0003, 0.015, len(dates))))
+        df = pd.DataFrame({'Stock': stk, 'Market': mkt}, index=dates)
+        return df, default_qr, default_roe, default_mcap
 
-    except Exception as e1:
-        # === INTENTO 2: Uso de ETF Proxy (Saltando .info) ===
-        try:
-            proxy_benchmark = PROXY_MAP.get(benchmark, benchmark)
-            
-            # Avisamos sutilmente al usuario
-            st.toast(f"⚠️ Yahoo Finance limitó el acceso. Conectando a datos Proxy ({proxy_benchmark})...", icon="🔄")
-            
-            df_stock = yf.download(ticker, start=start_date, end=end_date, progress=False)['Close']
-            df_index = yf.download(proxy_benchmark, start=start_date, end=end_date, progress=False)['Close']
-            
-            if isinstance(df_stock, pd.DataFrame): df_stock = df_stock.squeeze()
-            if isinstance(df_index, pd.DataFrame): df_index = df_index.squeeze()
-                
-            df = pd.DataFrame({'Stock': df_stock, 'Market': df_index}).dropna()
-            if df.empty: raise ValueError("Datos vacíos en Proxy.")
-            
-            return df, default_qr, default_roe, f"{ticker} (Datos de Respaldo)"
+with st.spinner("Sincronizando..."):
+    df, quick_ratio, roe, mcap = download_data(ticker_symbol, index_symbol, timeframe)
 
-        except Exception as e2:
-            # === INTENTO 3: Simulación Estadística (Movimiento Browniano) ===
-            st.error("🛑 Bloqueo total de IP en Yahoo Finance. Activando motor estadístico (Movimiento Browniano)...")
-            
-            dates = pd.bdate_range(end=end_date, periods=252)
-            np.random.seed(42) # Semilla fija para mantener consistencia gráfica
-            
-            mkt_returns = np.random.normal(0.0002, 0.01, 252)
-            stk_returns = (mkt_returns * 1.5) + np.random.normal(0, 0.015, 252) # Forzar Beta ~1.5
-            
-            market_price = 3500 * np.exp(np.cumsum(mkt_returns))
-            stock_price = 150 * np.exp(np.cumsum(stk_returns))
-            
-            df = pd.DataFrame({'Stock': stock_price, 'Market': market_price}, index=dates)
-            
-            return df, default_qr, default_roe, f"{ticker} (Modo Simulación ODS)"
-
-with st.spinner("Sincronizando con el mercado..."):
-    base_df, quick_ratio, roe, short_name = download_data(ticker_symbol, index_symbol)
-
-# --- CÁLCULO DINÁMICO DE INDICADORES ---
-df = base_df.copy()
+# --- CÁLCULOS TÉCNICOS Y FUNDAMENTALES ---
+current_price = df['Stock'].iloc[-1]
 returns = df.pct_change().dropna()
-
-# Beta por matriz de covarianzas (Equivalente matemático a OLS)
 cov_mat = np.cov(returns['Market'], returns['Stock'])
-beta_calc = cov_mat[0, 1] / cov_mat[0, 0]
+beta_calc = cov_mat[0, 1] / cov_mat[0, 0] if cov_mat[0,0] != 0 else 1.0
 
-# Bandas de Bollinger Dinámicas
-df['SMA'] = df['Stock'].rolling(window=bb_window).mean()
-df['STD'] = df['Stock'].rolling(window=bb_window).std()
+# Indicadores
+df['SMA'] = df['Stock'].rolling(window=20).mean()
+df['STD'] = df['Stock'].rolling(window=20).std()
 df['Upper_BB'] = df['SMA'] + (df['STD'] * 2)
 df['Lower_BB'] = df['SMA'] - (df['STD'] * 2)
 
-# MACD Dinámico
-df['EMA_Fast'] = df['Stock'].ewm(span=macd_fast, adjust=False).mean()
-df['EMA_Slow'] = df['Stock'].ewm(span=macd_slow, adjust=False).mean()
-df['MACD'] = df['EMA_Fast'] - df['EMA_Slow']
-df['Signal_Line'] = df['MACD'].ewm(span=macd_signal, adjust=False).mean()
-df['MACD_Hist'] = df['MACD'] - df['Signal_Line']
+df['EMA_12'] = df['Stock'].ewm(span=12, adjust=False).mean()
+df['EMA_26'] = df['Stock'].ewm(span=26, adjust=False).mean()
+df['MACD'] = df['EMA_12'] - df['EMA_26']
+df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
-# --- PESTAÑAS DE VISUALIZACIÓN ---
-tab1, tab2, tab3 = st.tabs(["1. Perfil Macro y Beta", "2. Análisis Técnico Interactivo", "3. CONCLUSIÓN Y VEREDICTO (IA)"])
+delta = df['Stock'].diff()
+gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+rs = gain / loss
+df['RSI'] = 100 - (100 / (1 + rs))
+
+max_p = df['Stock'].max()
+min_p = df['Stock'].min()
+diff_p = max_p - min_p
+fib_levels = [max_p, max_p - 0.236*diff_p, max_p - 0.382*diff_p, max_p - 0.5*diff_p, max_p - 0.618*diff_p, min_p]
+
+# --- PESTAÑAS (En minúsculas según requerimiento) ---
+tab1, tab2, tab3, tab4 = st.tabs(["información básica", "perfil macro y beta", "análisis técnico", "veredicto final"])
 
 with tab1:
-    st.header(f"Perfil de Riesgo e Información: {short_name}")
+    st.header(f"Información Corporativa: {selected_company}")
     
-    # --- COTIZACIÓN EN TIEMPO REAL ---
-    if len(df) > 1:
-        current_price = df['Stock'].iloc[-1]
-        prev_price = df['Stock'].iloc[-2]
-        delta_pct = ((current_price / prev_price) - 1) * 100
+    prompt_info = f"""
+    Eres un analista financiero. Devuelve la información de la empresa {selected_company} en formato JSON OBLIGATORIAMENTE, con la siguiente estructura exacta:
+    {{
+        "descripcion": "Quiénes son y qué hacen (máximo 70 palabras).",
+        "riesgos": "Análisis del entorno (riesgo político, inflación, y otros dos factores) en {stock_info['region']} (máximo 150 palabras).",
+        "segmentos": ["Segmento A", "Segmento B", "Segmento C"],
+        "porcentajes": [50, 30, 20]
+    }}
+    Asegúrate de que la suma de porcentajes sea 100.
+    """
+    
+    with st.spinner("IA analizando fundamentales de la empresa..."):
+        info_json_str = get_gemini_response(prompt_info)
         
-        col_price, col_empty = st.columns([1, 2])
-        with col_price:
-            st.metric(
-                label=f"Cotización Actual ({stock_info['currency']})", 
-                value=f"{current_price:.2f}", 
-                delta=f"{delta_pct:.2f}% (1D)"
-            )
-    st.markdown("---")
-    
-    st.write("La base macroeconómica (Teorías de Fisher, PPA y PTI) define el entorno en el que opera la compañía.")
-    c1, c2, c3 = st.columns(3)
-    c1.markdown(f"<div class='metric-box'><p>Beta (1 Año)</p><div class='metric-value'>{beta_calc:.3f}</div></div>", unsafe_allow_html=True)
-    c2.markdown(f"<div class='metric-box'><p>Test Ácido</p><div class='metric-value'>{quick_ratio}</div></div>", unsafe_allow_html=True)
-    c3.markdown(f"<div class='metric-box'><p>ROE (DuPont)</p><div class='metric-value'>{roe*100:.2f}%</div></div>" if isinstance(roe, float) else "<div class='metric-box'><p>ROE (DuPont)</p><div class='metric-value'>N/A</div></div>", unsafe_allow_html=True)
+    try:
+        # Limpiar posible formato Markdown del output de Gemini
+        if "```json" in info_json_str:
+            info_json_str = info_json_str.split("```json")[1].split("```")[0].strip()
+        data_info = json.loads(info_json_str)
+        
+        st.write(f"**Descripción:** {data_info.get('descripcion', 'N/A')}")
+        
+        col_pie, col_risk = st.columns([1, 1])
+        with col_pie:
+            fig_pie = go.Figure(data=[go.Pie(labels=data_info['segmentos'], values=data_info['porcentajes'], hole=.4, marker_colors=['#005A9C', '#00c49f', '#ffbb28', '#ff8042'])])
+            fig_pie.update_layout(title_text="Composición de Ingresos", margin=dict(t=40, b=0, l=0, r=0))
+            st.plotly_chart(fig_pie, use_container_width=True)
+            
+        with col_risk:
+            st.markdown("### Análisis del Entorno Macro y Riesgos")
+            st.markdown(f"<div class='ai-box'>{data_info.get('riesgos', 'N/A')}</div>", unsafe_allow_html=True)
+            
+        st.session_state['tab1_data'] = data_info # Guardar para la pestaña final
+        
+    except Exception as e:
+        st.error("Error decodificando la respuesta de la IA. Por favor, recarga.")
 
 with tab2:
-    st.header(f"Gráficos Técnicos ({bb_window} periodos Bollinger | MACD {macd_fast}/{macd_slow}/{macd_signal})")
+    st.header("Análisis de Riesgo y Divisas")
     
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.7, 0.3])
+    c1, c2, c3 = st.columns(3)
+    c1.markdown(f"<div class='metric-box'><div class='metric-title'>BETA</div><div class='metric-value'>{beta_calc:.2f}</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='metric-box'><div class='metric-title'>ROE (DuPont)</div><div class='metric-value'>{roe*100:.2f}%</div></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='metric-box'><div class='metric-title'>Test Ácido</div><div class='metric-value'>{quick_ratio:.2f}</div></div>", unsafe_allow_html=True)
     
-    fig.add_trace(go.Scatter(x=df.index, y=df['Stock'], mode='lines', name='Precio', line=dict(color='#c9d1d9')), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Upper_BB'], mode='lines', name='Banda Superior', line=dict(color='rgba(88, 166, 255, 0.5)', dash='dash')), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Lower_BB'], mode='lines', name='Banda Inferior', line=dict(color='rgba(88, 166, 255, 0.5)', dash='dash'), fill='tonexty', fillcolor='rgba(88, 166, 255, 0.1)'), row=1, col=1)
+    prompt_macro = f"""
+    Actúa como analista. Para la acción {selected_company} (Beta: {beta_calc:.2f}, ROE: {roe*100:.2f}%, Test Ácido: {quick_ratio:.2f}, Inflación País: {stock_info['inflacion']}%):
     
-    fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], mode='lines', name='MACD', line=dict(color='#58a6ff')), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Signal_Line'], mode='lines', name='Señal', line=dict(color='#f85149')), row=2, col=1)
-    colors = ['#3fb950' if val >= 0 else '#f85149' for val in df['MACD_Hist']]
-    fig.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name='Histograma', marker_color=colors), row=2, col=1)
-
-    fig.update_layout(height=600, plot_bgcolor='#0d1117', paper_bgcolor='#0d1117', font_color='#c9d1d9', margin=dict(l=0, r=0, t=30, b=0))
-    st.plotly_chart(fig, use_container_width=True)
+    1. Interpreta la Beta. OBLIGATORIO empezar con la frase exacta: "Por cada punto que el índice de referencia suba la acción subirá el valor que corresponda en referencia 1:{beta_calc:.2f}." Continúa interpretando en 90 palabras máximo.
+    2. Interpreta el ROE (DuPont) en máximo 90 palabras.
+    3. Interpreta el Test Ácido en máximo 90 palabras.
+    4. Analiza las 3 teorías de divisas (Paridad Poder Adquisitivo, Paridad Tasas de Interés, Efecto Fisher) partiendo de una inflación del {stock_info['inflacion']}% en {stock_info['region']} para la divisa {stock_info['currency']}.
+    
+    Formato OBLIGATORIO:
+    **Interpretación Beta:** [Texto]
+    **Interpretación DuPont:** [Texto]
+    **Interpretación Test Ácido:** [Texto]
+    **Análisis Teorías de Divisas:** [Texto]
+    """
+    
+    with st.spinner("IA analizando métricas de riesgo..."):
+        macro_text = get_gemini_response(prompt_macro)
+        st.markdown(f"<div class='ai-box'>{macro_text}</div>", unsafe_allow_html=True)
+        st.session_state['tab2_data'] = macro_text
 
 with tab3:
-    st.header("🤖 Veredicto Final del Analista (IA Cuantitativa)")
-    st.write("Genera una evaluación que integra fundamentos corporativos, riesgo macroeconómico y posición técnica en base a la temporalidad seleccionada.")
+    st.header(f"Gráfico Interactivo Avanzado ({timeframe})")
     
-    if st.button("Generar Conclusión Final con Gemini", type="primary"):
-        current_price = df['Stock'].iloc[-1]
-        bb_upper = df['Upper_BB'].iloc[-1]
-        bb_lower = df['Lower_BB'].iloc[-1]
-        macd_val = df['MACD'].iloc[-1]
-        signal_val = df['Signal_Line'].iloc[-1]
-        roe_val = f"{roe*100:.2f}%" if isinstance(roe, float) else "No disponible"
+    fig = make_subplots(rows=3 if show_macd or show_rsi else 1, cols=1, 
+                        shared_xaxes=True, vertical_spacing=0.05, 
+                        row_heights=[0.6, 0.2, 0.2] if show_macd and show_rsi else ([0.7, 0.3] if show_macd or show_rsi else [1]))
+    
+    # Precio Principal
+    fig.add_trace(go.Scatter(x=df.index, y=df['Stock'], mode='lines', name='Precio', line=dict(color='#005A9C', width=2)), row=1, col=1)
+    
+    if show_bb:
+        fig.add_trace(go.Scatter(x=df.index, y=df['Upper_BB'], mode='lines', name='Banda Sup', line=dict(color='rgba(0,196,159,0.5)', dash='dash')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['Lower_BB'], mode='lines', name='Banda Inf', line=dict(color='rgba(0,196,159,0.5)', dash='dash'), fill='tonexty', fillcolor='rgba(0,196,159,0.1)'), row=1, col=1)
+    
+    if show_fib:
+        colors = ['#ff0000', '#ff8c00', '#ffd700', '#008000', '#0000ff', '#800080']
+        for i, level in enumerate(fib_levels):
+            fig.add_hline(y=level, line_dash="dot", line_color=colors[i], annotation_text=f"Fib {i}", row=1, col=1)
+
+    row_idx = 2
+    if show_macd:
+        fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], mode='lines', name='MACD', line=dict(color='#ffbb28')), row=row_idx, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], mode='lines', name='Señal MACD', line=dict(color='#ff8042')), row=row_idx, col=1)
+        row_idx += 1
         
-        prompt = f"""
-        Actúa como el Jefe de Riesgos y Tesorería de PwC España. Realiza el veredicto de inversión para la acción {short_name} ({ticker_symbol}) como parte de una tesis de MBA.
+    if show_rsi:
+        fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], mode='lines', name='RSI', line=dict(color='#8884d8')), row=row_idx, col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color="red", row=row_idx, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="green", row=row_idx, col=1)
+
+    fig.update_layout(height=700, margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor='white', paper_bgcolor='white', hovermode='x unified')
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#eef2f5')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#eef2f5')
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+with tab4:
+    st.header("Veredicto Cuantitativo Final")
+    
+    if st.button("Generar Informe Institucional (IA)", type="primary"):
         
-        Debes sintetizar OBLIGATORIAMENTE las siguientes variables actuales:
-        1. Fundamentos: ROE (Análisis DuPont) de {roe_val} y Test Ácido de {quick_ratio}.
-        2. Riesgo y Macro: Beta de {beta_calc:.2f}. Considera el Efecto Fisher y la Paridad de Tipos de Interés (el activo opera en {stock_info['region']}, divisa {stock_info['currency']}).
-        3. Análisis Técnico (Temporalidad seleccionada por el usuario):
-           - Precio actual: {current_price:.2f}
-           - Bandas de Bollinger ({bb_window} periodos): Banda Superior {bb_upper:.2f}, Inferior {bb_lower:.2f}.
-           - MACD ({macd_fast}, {macd_slow}, {macd_signal}): Línea MACD {macd_val:.2f}, Señal {signal_val:.2f}.
+        # Recuperar datos de pestañas anteriores si existen
+        tab1_info = st.session_state.get('tab1_data', {})
+        desc = tab1_info.get('descripcion', 'N/A')
+        riesgos = tab1_info.get('riesgos', 'N/A')
         
-        Estructura de tu respuesta (máximo 4-5 párrafos, tono profesional, analítico y directo):
-        - Síntesis Fundamental (Liquidez y Rentabilidad).
-        - Evaluación Macro y de Riesgo (Relación Beta/Divisas).
-        - Posición Técnica Actual (Momento según BB y MACD).
-        - VEREDICTO FINAL: Declara explícitamente si la recomendación es COMPRAR, MANTENER o VENDER, justificando el peso relativo de las variables anteriores. No des rodeos en el veredicto.
+        prompt_final = f"""
+        Actúa como un analista senior de riesgos financieros y valoración corporativa.
+        Debes compilar un informe ejecutivo final para la empresa {selected_company} (Ticker: {ticker_symbol}).
+        
+        DATOS A INCLUIR EN ORDEN:
+        a. Nombre de la sociedad y Ticker (DESTACADO), Cotización actual: {current_price:.2f} {stock_info['currency']}.
+        b. Capitalización bursátil: {mcap:.2f} miles de millones.
+        c. Descripción: {desc} | Riesgos: {riesgos}
+        d. Indicadores: Beta ({beta_calc:.2f}), ROE ({roe*100:.2f}%), Test Ácido ({quick_ratio:.2f}). Teorías divisas considerando inflación {stock_info['inflacion']}%.
+        e. Gráficos técnicos: Análisis corto (menos de 50 palabras) del MACD, RSI y Bollinger en temporalidad {timeframe}.
+        
+        REGLAS DE DECISIÓN DEL MODELO (Aplica esta lógica internamente):
+        - Bloque Fundamental (35%)
+        - Bloque Riesgo y Macro (30%)
+        - Bloque Divisas (15%)
+        - Bloque Análisis Técnico (20%)
+        Calcula un SCORE TOTAL de -100 a +100.
+        Decisión: +40 a +100 (COMPRAR), +10 a +39 (MANTENER), -9 a +9 (NEUTRAL), -10 a -39 (REDUCIR), -40 a -100 (VENDER).
+        Regla prudencial: Si riesgo geopolítico es Alto o Beta > 1.5, Máximo permitido = MANTENER.
+        
+        REQUISITOS DEL TEXTO FINAL (JUSTIFICACIÓN):
+        Redacta una justificación estructurada en formato informe ejecutivo en MENOS DE 100 PALABRAS que:
+        1. Priorice riesgos sobre oportunidades.
+        2. Evalúe escenarios adversos (shock inflacionario/crisis/geopolítico).
+        3. Analice sensibilidad a tasas.
+        4. Explique coherencia técnico-fundamental.
+        5. Indique evento invalidante.
+        6. Concluya con el Score [INSERTAR SCORE], la decisión [COMPRAR/MANTENER/VENDER] y el nivel de convicción (Alto/Medio/Bajo).
+        
+        Lenguaje: Profesional, crítico y prudente (tipo comité de riesgos bancario).
         """
         
-        try:
-            api_key = st.secrets.get("GEMINI_API_KEY")
-            if not api_key:
-                st.error("⚠️ Configura la GEMINI_API_KEY en los Secrets de Streamlit.")
-            else:
-                genai.configure(api_key=api_key)
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                
-                with st.spinner("La IA está sintetizando las variables y redactando el veredicto..."):
-                    response = model.generate_content(prompt)
-                    
-                st.success("Análisis completado.")
-                st.markdown("---")
-                st.markdown(response.text)
-                st.markdown("---")
-                st.caption("Nota: Este análisis está generado por Inteligencia Artificial y no constituye asesoramiento financiero real.")
-                
-        except Exception as e:
-            st.error(f"Error de conexión con la IA: {e}")
+        with st.spinner("Compilando reporte final aplicando modelo de Scoring..."):
+            veredicto = get_gemini_response(prompt_final)
+            st.markdown(veredicto)
